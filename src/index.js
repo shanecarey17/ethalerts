@@ -324,7 +324,7 @@ const run = async () => {
         }
     }
 
-    const wss = new WebSocket.Server({ port: 8800 });
+    const wss = new WebSocket.Server({ port: 8081 });
 
     wss.on('connection', (ws) => {
         clientConnections.add(ws);
@@ -335,7 +335,7 @@ const run = async () => {
     });
 
     const httpServer = http.createServer(handleHTTPRequest);
-    httpServer.listen(8900);
+    httpServer.listen(8080); // AWS default port
 
     console.log('INITIALIZED');
 
