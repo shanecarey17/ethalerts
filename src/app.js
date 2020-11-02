@@ -1,6 +1,5 @@
 const process = require('process'); // eslint
-
-require('console-stamp')(console);
+const path = require('path');
 
 const assert = require('assert');
 const fs = require('fs');
@@ -9,12 +8,15 @@ const ethers = require('ethers');
 const web3 = require('web3');
 
 const WebSocket = require('ws');
-const http = require('http');
+const express = require('express');
+const bodyParser = require('body-parser');
 
 const mysql = require('mysql');
 
 const tokens = require('./tokens.js');
 const constants = require('./constants.js');
+
+const auth = require('./auth');
 
 const UNISWAP_FACTORY_ADDRESS = ethers.utils.getAddress('0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f'); 
 
@@ -279,18 +281,17 @@ const publishMessage = (data) => {
     }
 };
 
-const handleHTTPRequest = (req, res) => {
-    res.writeHead(200);
-    res.end();
-};
-
-const connectDatabase = () => {
+const getMYSQLConnection = () => {
     var connection = mysql.createConnection({
         host     : 'aa1jy7y9lrsopho.c8b1ze3faytr.us-east-1.rds.amazonaws.com',
         user     : 'ethalertsdb',
         password : 'ethalertsdbpassword', 
         port     : 3306
     });
+
+    connection.connect();
+
+    return connection;
 }
 
 const run = async () => {
@@ -334,20 +335,48 @@ const run = async () => {
         }));
     });
 
-    const httpServer = http.createServer(handleHTTPRequest);
-    httpServer.listen(8080); // AWS default port
-
-    console.log('INITIALIZED');
-
-    // Get websocket provider
+    // Start websocket provider
     let blockNumber = await provider.getBlockNumber();
     let webSocketProvider = startWebSocketProvider(blockNumber, eventHandlers);
 
-    while (true) {
-        await new Promise((resolve) => setTimeout(resolve, 1000)); // TODO forever
-    }
+    // Get the db connection
+    //let connection = getMYSQLConnection();
 
-    console.log('EXITING');
+    // Run http server
+    const app = express();
+
+    app.use(express.static(path.join(__dirname, 'client/build')));
+
+    let jsonParser = bodyParser.json();
+
+    let urlEncodedParser = bodyParser.urlencoded({ extended: false });
+
+    let authMiddleware = auth.getVerifyMiddleware();
+
+    app.get('/api', (req, res) => {
+        console.log('HERE');
+        res.json({
+            data: 'Hello world'
+        });
+    });
+
+    app.post('/setAlert', authMiddleware, jsonParser, (req, res) => {
+        
+    });
+
+/*
+    app.get('*', (req, res) => {
+        console.log('HERE1');
+        res.sendFile(path.join(__dirname, '/client/build/index.html'));
+    });
+*/
+    app.listen(8080, () => {
+        console.log('App listening on port 8080');
+    });
+
+    while (true) {
+        await new Promise(res => setTimeout(res, 100000 * 1000));
+    }
 };
 
 const main = async (isLive) => {

@@ -1,2 +1,2 @@
 mkdir -p releases
-zip -r releases/ethalerts-release.zip ./* -x node_modules/**\*
+zip -r releases/ethalerts-release.zip ./*
