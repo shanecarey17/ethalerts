@@ -28,6 +28,8 @@ const getUniswapFactory = async (provider) => {
     return uniswapFactory;
 };
 
+let getPrice = () => { throw new Error('getPrice not set'); };
+
 const UniswapPairHandler = function(contract, token0, token1) {
     this.contract = contract;
 
@@ -39,12 +41,68 @@ const UniswapPairHandler = function(contract, token0, token1) {
     this.reserve0 = constants.ZERO;
     this.reserve1 = constants.ZERO;
 
+    this.sizeAlerts = [];
+    this.addAlert = (alertParams, callback) => {
+        let options = alertParams.options;
+        if (options.type === 'large_trade') {
+            options.sizeUSD = Number(options.sizeUSD);
+
+            this.sizeAlerts.push({alertParams, callback});
+            this.sizeAlerts.sort((a, b) => a.alertParams.options.sizeUSD - b.alertParams.options.sizeUSD);
+        } else {
+            throw new Error('invalid type');
+        }
+    }
+
     this.onMint = ({sender, amount0, amount1}, log) => {
         console.log('MINT');
     }
 
+    this.onBurn =({}) => {
+        console.log('BURN');
+    }
+
     this.onSwap = ({sender, amount0In, amount1In, amount0Out, amount1Out, to}, log) => {
         console.log('SWAP');
+
+        let tokenIn = amount0In.gt(0) ? this.token0 : this.token1;
+        let amountIn = amount0In.gt(0) ? amount0In : amount1In;
+        let tokenOut = amount0Out.gt(0) ? this.token0 : this.token1;
+        let amountOut = amount0Out.gt(0) ? amount0Out : amount1Out;
+
+        let ethPrice = getPrice('ETH-USD');
+        let btcPrice = getPrice('BTC-USD');
+
+        let tradeSizeUSD = Number.MAX_SAFE_INTEGER;
+        if (tokenIn.symbol === 'WETH') {
+            tradeSizeUSD = Number(tokenIn.formatAmount(amountIn)) * ethPrice;
+        } else if (tokenOut.symbol === 'WETH') {
+            tradeSizeUSD = Number(tokenOut.formatAmount(amountOut)) * ethPrice;
+        } else if (tokenIn.symbol === 'WBTC') {
+            tradeSizeUSD = Number(tokenIn.formatAmount(amountIn)) * btcPrice;
+        } else if (tokenOut.symbol === 'WBTC') {
+            tradeSizeUSD = Number(tokenOut.formatAmount(amountOut)) * btcPrice;
+        }
+
+        let tradeData = {
+            tx: log.transactionHash,
+            tradeSizeUSD,
+            tokenIn: tokenIn.symbol,
+            tokenOut: tokenOut.symbol,
+            amountIn: tokenIn.formatAmount(amountIn),
+            amountOut: tokenOut.formatAmount(amountOut)
+        };
+
+        this.sizeAlerts = this.sizeAlerts.filter(a => !a.cancelled);
+        for (let sizeAlert of this.sizeAlerts) {
+            if (sizeAlert.alertParams.options.sizeUSD > tradeSizeUSD) {
+                break;
+            }
+
+            sizeAlert.callback(tradeData, sizeAlert);
+        }
+
+        console.log(`TRADE SIZE USD ${tradeSizeUSD}`);
     }
 
     this.onSync = ({reserve0, reserve1}, log) => {
@@ -67,7 +125,7 @@ const UniswapPairHandler = function(contract, token0, token1) {
 
 const getUniswapPair = async (factory, token0, token1, provider) => {
     if (token0.address === token1.address) {
-        return constants.ZERO_ADDRESS;
+        return null;
     }
 
     let pairAddress = await factory.getPair(token0.address, token1.address);
@@ -79,20 +137,28 @@ const getUniswapPair = async (factory, token0, token1, provider) => {
     return new UniswapPairHandler(pairContract, sortedTokens[0], sortedTokens[1]);
 }
 
-const UniswapTracker = function() {
+const UniswapTracker = function(priceOracle) {
+    getPrice = (asset) => {
+        let prices = priceOracle.getPrices();
+
+        let price = prices.find(p => p.asset === asset);
+
+        return price.answer;
+    }
+
     this.init = async () => {
         let provider = new ethers.providers.InfuraProvider('mainnet', 'd31d552b4e5d41b5b34aec1310fbdf8f');
 
-        this.eventHandlers = {};
+        this.eventHandlers = [];
 
         let uniswapFactory = await getUniswapFactory(provider);
 
-        this.eventHandlers[uniswapFactory.address] = new (function() {
+        this.eventHandlers.push(new (function() {
             this.contract = uniswapFactory;
             this.onPairCreated = ({}) => {
                 console.log('PAIR CREATED')
             }
-        })();
+        })());
 
         let allTokens = [];
         for (let addr of selectedTokens) {
@@ -100,23 +166,27 @@ const UniswapTracker = function() {
         }   
 
         this.uniswapPairs = [];
-        for (let t0 of allTokens) {
-            for (let t1 of allTokens) {
-                let uniswapPair = await getUniswapPair(uniswapFactory, t0, t1, provider);
-                if (uniswapPair == constants.ZERO_ADDRESS) {
+        for (let i = 0; i < allTokens.length; ++i) {
+          for (let j = i + 1; j < allTokens.length; ++j) {
+                let uniswapPair = await getUniswapPair(uniswapFactory, allTokens[i], allTokens[j], provider);
+                if (uniswapPair === null) {
                     continue;
                 }
 
-                this.eventHandlers[uniswapPair.contract.address] = uniswapPair;
+                this.eventHandlers.push(uniswapPair);
                 this.uniswapPairs.push(uniswapPair);
-            }
+          }
         }
 
         return this.eventHandlers;
     };
 
-    this.addAlert = (options, callback) => {
-
+    this.addAlert = (alertParams, callback) => {
+        let eventHandler = this.eventHandlers.find(e => e.contract.address === alertParams.options.address);
+        if (eventHandler === undefined) {
+            throw new Error('invalid address');
+        }
+        eventHandler.addAlert(alertParams, callback);
     };
 
     this.getPairReserves = () => {
@@ -127,7 +197,8 @@ const UniswapTracker = function() {
                 token0: pairHandler.token0.address,
                 token1: pairHandler.token1.address,
                 name: pairHandler.token0.symbol + '-' + pairHandler.token1.symbol,
-                blockNumber: pairHandler.blockNumber
+                blockNumber: pairHandler.blockNumber,
+                address: pairHandler.contract.address
             };
         });
     }

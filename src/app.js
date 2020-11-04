@@ -1,6 +1,7 @@
 const server = require('./server.js');
 const chain = require('./chain.js');
 const uniswap = require('./uniswap.js');
+const chainlink = require('./chainlink.js');
 
 const main = async () => {
     process.on('unhandledRejection', async (err) => {
@@ -10,13 +11,17 @@ const main = async () => {
         process.exit();
     });
 
-    let uniswapTracker = new uniswap.UniswapTracker();
+    let chainlinkTracker = new chainlink.ChainlinkTracker();
+
+    let uniswapTracker = new uniswap.UniswapTracker(chainlinkTracker);
 
     let eventHandlers = await uniswapTracker.init();
 
-    let listener = new chain.ChainListener(eventHandlers);
+    let moreEventHandlers = await chainlinkTracker.init();
 
-    server.init(uniswapTracker);
+    let listener = new chain.ChainListener([...eventHandlers, ...moreEventHandlers]);
+
+    server.init(uniswapTracker, chainlinkTracker);
 };
 
 main();

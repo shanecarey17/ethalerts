@@ -3,8 +3,8 @@ const assert = require('assert');
 const ethers = require('ethers');
 const web3 = require('web3');
 
-const ChainListener = function(eventHandlers, startBlock) {
-    this.eventHandlers = eventHandlers;
+const ChainListener = function(handlers, startBlock) {
+    this.eventHandlers = Object.fromEntries(handlers.map(h => [h.contract.address, h]));
 
     this.applyLog = (log) => {
         // Handle the event
@@ -31,21 +31,26 @@ const ChainListener = function(eventHandlers, startBlock) {
 
     this.onConfirmation = (blockNumber) => {
         let lastUpdate = null;
-        for (let update of this.updateQueue) {
+        while (true) {
+            if (this.updateQueue.length === 0) {
+               break;
+            }
+
+            let update = this.updateQueue[0];
             if (update.block >= blockNumber - this.confirmationsThreshold) {
                 break;
             }
 
             this.applyLog(update);
-        }
 
-        this.updateQueue = this.updateQueue.slice(this.updateQueue.indexOf(lastUpdate) + 1, this.updateQueue.length);
+            this.updateQueue.shift();
+        }
     } 
 
-    this.onLogRemoved = (log) => {
+    this.onLogRemoved = (removedLog) => {
         this.updateQueue = this.updateQueue.filter((update) => {
-            return update.log.transactionHash !== log.transactionHash &&
-                update.log.logIndex !== log.logIndex;
+            return update.transactionHash !== removedLog.transactionHash &&
+                update.logIndex !== removedLog.logIndex;
         });
 
         // TODO die if log was already passed along
@@ -72,7 +77,7 @@ const ChainListener = function(eventHandlers, startBlock) {
     
     let blockSubscription = w3.eth.subscribe('newBlockHeaders');
 
-    let addresses = Object.keys(eventHandlers);
+    let addresses = Object.keys(this.eventHandlers);
 
     blockSubscription.on('data', (blockHeader) => {
         console.log(`NEW BLOCK ${blockHeader.number}`);
@@ -115,7 +120,7 @@ const ChainListener = function(eventHandlers, startBlock) {
     });
 
     let options = {
-        address: addresses,
+        address: Object.keys(this.eventHandlers),
     };
 
     let subscription = w3.eth.subscribe('logs', options);
