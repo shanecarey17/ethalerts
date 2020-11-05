@@ -7,7 +7,7 @@
     "client": "cd client && yarn start",
     "dev": "concurrently --kill-others-on-fail \"yarn server\" \"yarn client\"",
     "build": "cd client && npm run build",
-    "start": "node src/app.js"
+    "start": "yarn build && node src/app.js"
   },
   "engines": {
     "node": "12.13.0"
