@@ -30,7 +30,7 @@ const getUniswapFactory = async (provider) => {
 
 let getPrice = () => { throw new Error('getPrice not set'); };
 
-const UniswapPairHandler = function(contract, token0, token1) {
+const UniswapPairHandler = function(contract, token0, token1, reserve0, reserve1) {
     this.contract = contract;
 
     this.blockNumber = 0;
@@ -38,8 +38,8 @@ const UniswapPairHandler = function(contract, token0, token1) {
     this.token0 = token0;
     this.token1 = token1;
 
-    this.reserve0 = constants.ZERO;
-    this.reserve1 = constants.ZERO;
+    this.reserve0 = reserve0;
+    this.reserve1 = reserve1;
 
     this.sizeAlerts = [];
     this.addAlert = (alertParams, callback) => {
@@ -134,7 +134,9 @@ const getUniswapPair = async (factory, token0, token1, provider) => {
 
     let sortedTokens = [token0, token1].sort();
 
-    return new UniswapPairHandler(pairContract, sortedTokens[0], sortedTokens[1]);
+    let [reserve0, reserve1, ts] = await pairContract.getReserves();
+
+    return new UniswapPairHandler(pairContract, sortedTokens[0], sortedTokens[1], reserve0, reserve1);
 }
 
 const UniswapTracker = function(priceOracle) {
@@ -192,8 +194,8 @@ const UniswapTracker = function(priceOracle) {
     this.getPairReserves = () => {
         return this.uniswapPairs.map((pairHandler) => {
             return {
-                reserve0: pairHandler.reserve0.toString(),
-                reserve1: pairHandler.reserve1.toString(),
+                reserve0: pairHandler.token0.formatAmount(pairHandler.reserve0),
+                reserve1: pairHandler.token1.formatAmount(pairHandler.reserve1),
                 token0: pairHandler.token0.address,
                 token1: pairHandler.token1.address,
                 name: pairHandler.token0.symbol + '-' + pairHandler.token1.symbol,
